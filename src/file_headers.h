@@ -1,10 +1,12 @@
+char WAV_header_data_block[44];
+
 struct WAV_header {
     char    riff[4];
     int     size;
     char    wave[4];
 
     char    format_marker[4];
-    short   format_marker_len;
+    int   format_marker_len;
     short   format;
     short   num_channels;
     int     sample_rate;
