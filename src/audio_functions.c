@@ -1,6 +1,10 @@
 #include <stdio.h>
+#include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sys/types.h>
+#include <errno.h>
+
 #include "definitions.h"
 #include "file_headers.h"
 #include "audio_capture.h"
@@ -77,24 +81,25 @@ int write_WAV(char *file_path, struct WAV_header *wh, char *data, int datasize) 
     }
 }
 
-int main() {
-    int channels = 2;
-    struct WAV_header *wh = (struct WAV_header *) malloc(sizeof(struct WAV_header));
-    build_header(wh, channels);
-    printf("DATA: %s\n", WAV_header_data_block);
-    int datasize = WAV_SAMPLES * channels * BITS_PER_SAMPLE / 8;
-    char data[datasize];
-    printf("datasize: %d\n", datasize);
-    char device[] = "loop\0";
-    int ret = get_audio_data(device, channels, data, datasize);
-    printf("get_audio_data returned\n");
-    fflush(stdout);
-    wh->size = wh->data_size + 36;
-    write_WAV("/home/kdw/BoilerMake/testfiles/test.wav", wh, data, datasize);
-}
+// int main() {
+//     int channels = 2;
+//     struct WAV_header *wh = (struct WAV_header *) malloc(sizeof(struct WAV_header));
+//     build_header(wh, channels);
+//     printf("DATA: %s\n", WAV_header_data_block);
+//     int datasize = WAV_SAMPLES * channels * BITS_PER_SAMPLE / 8;
+//     char data[datasize];
+//     printf("datasize: %d\n", datasize);
+//     char device[] = "loop\0";
+//     int ret = get_audio_data(device, channels, data, datasize);
+//     printf("get_audio_data returned\n");
+//     fflush(stdout);
+//     wh->size = wh->data_size + 36;
+//     write_WAV("/home/kdw/BoilerMake/testfiles/test.wav", wh, data, datasize);
+// }
 
-void start_stream(int output) {
-    int pipes;
+void start_stream(int output, int channels) {
+    fprintf(stderr, "start_stream() called\n");
+    int pipes[2], pid;
     pipe(pipes);
 
         pid = fork();
@@ -105,59 +110,114 @@ void start_stream(int output) {
         if (pid == 0) {
             // Child Process
             close(pipes[0]);
-            dup2(1, pipes[1]);
+            dup2(pipes[1], 1);
+            close(pipes[1]);
 
             char *args[5];
-            strndup(args[0], "pacat\0", 6);
-            strndup(args[1], "--record\0", 9);
-            strndup(args[2], "-d\0", 3);
-            strndup(args[3], MONITOR, strlen(MONITOR) + 1);
-            strndup(args[4], "\0", 1);
+            args[0] = "pacat";
+            args[1] = "--record";
+            args[2] = "-d";
+            args[3] = MONITOR;
+            args[4] = NULL;
+            fprintf(stderr, "Starting pacat\n");
 
-            execvp(args[0], args[]);
+            int ret = execvp(args[0], args);
+            if (ret < 0) {
+                fprintf(stderr, "Error pacat %d -- %s\n", errno, strerror(errno));
+            }
         } else {
             // Parent Process
             close(pipes[1]);
-            dup2(0, pipes[0]);
-            dup2(1, output);
+            dup2(pipes[0], 0);
+            close(pipes[0]);
+            dup2(output, 1);
+            close(output);
 
-            char *args[13];
-            strndup(args[0], "sox\0", 4);
-            strndup(args[1], "-t\0", 3);
-            strndup(args[2], "raw\0", 4);
-            strndup(args[3], "-r\0", 3);
-            char *sample_rate = itoa(SAMPLE_RATE);
-            strdup(args[4], sample_rate);
-            strndup(args[5], "-e\0", 3);
-            strndup(args[6], "signed-integer\0", 15);
-            strndup(args[7], "-L\0", 3);
-            strndup(args[8], "-b\0", 3);
-            char *bps = itoa(BITS_PER_SAMPLE);
-            strdup(args[9], bps);
-            strndup(args[10], "-c\0", 3);
-            char *chs = itoa(channels);
-            strdup(args[11], chs);
-            strndup(args[12], "-\0", 2);
+            char *args[25];
+            args[0] = "sox";
+            args[1] = "-t";
+            args[2] = "raw";
+            args[3] = "-r";
+            args[4] = (char *) malloc(sizeof(char) * SAMPLE_RATE / 10 + 1);
+            sprintf(args[4], "%d", SAMPLE_RATE);
+            args[5] = "-e";
+            args[6] = "signed-integer";
+            args[7] = "-L";
+            args[8] = "-b";
+            args[9] = (char *) malloc(sizeof(char) * BITS_PER_SAMPLE / 10 + 1);
+            sprintf(args[9], "%d", BITS_PER_SAMPLE);
+            args[10] = "-c";
+            args[11] = (char *) malloc(sizeof(char) * 2);
+            sprintf(args[11], "%d", channels);
+            args[12] = "-";
+            args[13] = "-t";
+            args[14] = "raw";
+            args[15] = "-r";
+            args[16] = (char *) malloc(sizeof(char) * SAMPLE_RATE / 10 + 1);
+            sprintf(args[16], "%d", SAMPLE_RATE);
+            args[17] = "-e";
+            args[18] = "signed-integer";
+            args[19] = "-b";
+            args[20] = "16";
+            args[21] = "-c";
+            args[22] = (char *) malloc(sizeof(char) * 2);
+            sprintf(args[22], "%d", channels);
+            args[23] = "-";
+            args[24] = NULL;
+            fprintf(stderr, "Starting sox\n");
 
-            execvp(args[0], args[]);
+            // usleep(20000);
+
+            int ret = execvp(args[0], args);
+            if (ret < 0) {
+                fprintf(stderr, "Error sox %d -- %s\n", errno, strerror(errno));
+            }
         }
 }
 
-void stream_audio(sock, input, channels) {
+void stream_audio(int sock, int input, int channels) {
+    char buff[64];
+
+    // Construct the WAV header
     struct WAV_header *wh = (struct WAV_header *) malloc(sizeof(struct WAV_header));
     build_header(wh, channels);
-    // printf("DATA: %s\n", WAV_header_data_block);
     int datasize = WAV_SAMPLES * channels * BITS_PER_SAMPLE / 8;
     char data[datasize];
-    // printf("datasize: %d\n", datasize);
-    // char device[] = "loop\0";
-    // int ret = get_audio_data(device, channels, data, datasize);
-    // printf("get_audio_data returned\n");
-    // fflush(stdout);
     wh->size = wh->data_size + 36;
-    int n = write(sock, wh, sizeof(struct WAV_header));
-    int i = 0;
-    while(i < datasize) {
-        
+
+    // HTTP header
+    char http_head[144];
+    sprintf(http_head, "HTTP/1.1 200 OK\nServer: WreschServer\nContent-Type: audio/wav\nContent-Length: %d\nAccept-Ranges: bytes\nConnection: close\n\n", wh->size);
+    // char *http_head =
+    // "HTTP/1.1 200 OK\n"
+    // "Server: WreschServer\n"
+    // "Content-Type: audio/wav\n"
+    // "Content-Length: \n"
+    // "Accept-Ranges: bytes\n"
+    // "Connection: close\n"
+    // "\n";
+
+    // Clear Pipe Buffer
+    char pipe_buf[128];
+    int j = 0;
+    while(j > 64) {
+        j = read(input, pipe_buf, 128);
     }
+    fprintf(stderr, "Buffer Cleared\n");
+
+    // Write http header to socket
+    int n = write(sock, http_head, strlen(http_head));
+    // Write header to socket
+    n = write(sock, wh, sizeof(struct WAV_header));
+    int i = 0;
+    // fflush(input);
+    while(i < datasize) {
+        n = read(input, buff, 64);
+        // printf("READ RESPONSE: %d\n", n);
+        n = write(sock, buff, 64);
+        // printf("WRITE RESPONSE: %d\n", n);
+        memset(buff, 0, 64);
+        i += 64;
+    }
+    printf("Wrote %d bytes\n", i);
 }

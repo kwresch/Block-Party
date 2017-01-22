@@ -5,9 +5,11 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <errno.h>
 
 #include "file_headers.h"
 #include "definitions.h"
+#include "audio_functions.h"
 
 int main(int argc, char *argv[]) {
     int pipes[2], sock, newsock, len, n, pid;
@@ -26,7 +28,9 @@ int main(int argc, char *argv[]) {
     if (pid == 0) {
         // Child Process
         close(pipes[0]);
-        start_stream(pipes[1]);
+        start_stream(pipes[1], 2);
+        fprintf(stderr, "Shouldn't reach here\n");
+
         // Shouldn't reach here
         exit(0);
 
@@ -39,7 +43,7 @@ int main(int argc, char *argv[]) {
 
     sock = socket(AF_INET, SOCK_STREAM, 0);
 
-    if (sockfd < 0) {
+    if (sock < 0) {
         fprintf(stderr, "Unable to open socket\n");
         exit(1);
     }
@@ -59,8 +63,12 @@ int main(int argc, char *argv[]) {
     len = sizeof(cli_addr);
 
     while (1) {
-        if ((newsock = accept(sock, (struct sockaddr *) &cli_addr, &len)) < 0) {
-            fprintf(stderr, "Unable to accept connection\n");
+        fprintf(stderr, "Accepting\n");
+        newsock = accept(sock, (struct sockaddr *) &cli_addr, &len);
+        // send(newsock, "1", 1, 0);
+        
+        if (newsock < 0) {
+            fprintf(stderr, "Unable to accept connection -- %d -- %s\n", errno, strerror(errno));
             exit(1);
         }
 
@@ -74,8 +82,10 @@ int main(int argc, char *argv[]) {
         if (pid == 0) {
             // Child Process
             close(sock);
+            sock = -1;
             
             stream_audio(newsock, pipes[0], 2);
+            exit(0);
         } else {
             // Parent Process
             close(newsock);
